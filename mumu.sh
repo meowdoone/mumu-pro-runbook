@@ -156,23 +156,40 @@ frida_on() {
 frida_off() { local s; s=$(find_serial); adb -s "$s" shell "pkill -f frida-server" 2>/dev/null; log "frida-server 已停"; }
 
 # ---- 业务 ----
+# pro0.py --check 有两处会坏顺序：先把 frida-server 起起来、中途又把设备代理清成 :0。
+# 所以这里不直接跑它，而是自己按正确顺序做：代理 → Play → frida → 检查 → 恢复代理，
+# 最后再用 pro0.py --check 校验（此时各件已就位，它能通过）。
 do_check() {
   local s; s=$(find_serial)
-  local had_proxy; had_proxy=$(adb -s "$s" shell "settings get global http_proxy" | tr -d '\r')
-  ( cd "$WORK" && "$PY" pro0.py --check --serial "$s" )
-  # --check 会清代理，恢复
-  if [ -n "$had_proxy" ] && [ "$had_proxy" != "null" ] && [ "$had_proxy" != ":0" ]; then
-    adb -s "$s" shell "settings put global http_proxy $had_proxy" >/dev/null
-    log "已恢复设备代理 $had_proxy"
+  # 1. 保证代理在
+  if [ "$(adb -s "$s" shell "settings get global http_proxy" | tr -d '\r')" != "10.0.2.2:$FORWARD_PORT" ]; then
+    net_on
   fi
+  # 2. Play 先起（frida 后起）
+  play_up
+  # 3. 再起 frida
+  frida_on
+  # 4. pro0.py 自检（会清代理，跑完立即恢复）
+  ( cd "$WORK" && "$PY" pro0.py --check --serial "$s" )
+  local rc=$?
+  adb -s "$s" shell "settings put global http_proxy 10.0.2.2:$FORWARD_PORT" >/dev/null
+  log "设备代理已恢复 10.0.2.2:$FORWARD_PORT"
+  return $rc
 }
 
 do_run18m() {
   local s; s=$(find_serial)
+  # 代理必须先就位，否则 Play / 收银台走直连拿不到美区 offer
+  [ "$(adb -s "$s" shell "settings get global http_proxy" | tr -d '\r')" = "10.0.2.2:$FORWARD_PORT" ] || net_on
   play_up
   frida_on
   ( cd "$WORK" && "$PY" pro0.py --account "current@device" --no-add --force \
       --sku g1.2tb.ai.18months_eft --serial "$s" )
+  local rc=$?
+  # pro0.py 内部会清设备代理，跑完恢复
+  adb -s "$s" shell "settings put global http_proxy 10.0.2.2:$FORWARD_PORT" >/dev/null
+  log "设备代理已恢复 10.0.2.2:$FORWARD_PORT"
+  return $rc
 }
 
 do_shot() {

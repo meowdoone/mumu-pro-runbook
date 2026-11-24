@@ -47,7 +47,7 @@ GMS 登录会直接 `ERR_TUNNEL_CONNECTION_FAILED` + HTTP 407。必须本地免�
 ./mumu.sh check
 ```
 
-`--check` 会执行 `settings put global http_proxy :0` 清设备代理，脚本跑完自动恢复。
+`--check` 内部有坑：它会先把 frida 起起来、又会把设备代理清成 `:0`。所以 `./mumu.sh check` 不直接跑它，而是自己按「代理 → Play → frida → 检查 → 恢复代理」的顺序走，最后才调 pro0.py 校验。
 
 ## 5. 跑号
 
