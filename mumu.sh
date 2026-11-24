@@ -131,24 +131,42 @@ net_on() {
 net_off() { local s; s=$(find_serial); adb -s "$s" shell "settings put global http_proxy :0" >/dev/null; log "设备代理已关"; }
 
 # ---- Play / frida（顺序敏感）----
+# Play 必须在 frida-server 缺席时启动，否则 fork 后 attach 超时被杀（50s start timeout）。
+# 而且判定「起来了」不能只看进程在——广播会临时拉起进程又退出。
+# 标准：fork 出的主进程能活过 20 秒（跨过一次 AM 的超时窗口），才算真起来。
+PLAY_SETTLE=20
+
+play_alive() { local s=$1; adb -s "$s" shell "pidof com.android.vending" 2>/dev/null | tr -d '\r'; }
+
 play_up() {
   local s; s=$(find_serial)
   adb -s "$s" shell "pkill -f frida-server" 2>/dev/null || true
+  sleep 1
   adb -s "$s" shell "am force-stop com.android.vending" 2>/dev/null || true
-  local i
-  for i in $(seq 1 15); do
-    adb -s "$s" shell "ps -A -o NAME" 2>/dev/null | grep -q "^com.android.vending$" && { log "Play 已在运行"; return 0; }
+  local i pid
+  for i in $(seq 1 20); do
     adb -s "$s" shell am start -n com.android.vending/com.google.android.finsky.activities.MainActivity >/dev/null 2>&1
     sleep 8
+    pid=$(play_alive "$s")
+    [ -n "$pid" ] || continue
+    sleep "$PLAY_SETTLE"
+    if [ "$(play_alive "$s")" = "$pid" ]; then
+      log "✅ Play 已稳定运行（pid $pid，活过 ${PLAY_SETTLE}s）"
+      return 0
+    fi
+    log "Play 起后又死了，重试（$i）"
+    adb -s "$s" shell "am force-stop com.android.vending" 2>/dev/null || true
+    sleep 2
   done
-  die "Play 商店起不来"
+  die "Play 商店反复起不来，看 logcat：adb logcat -d | grep vending"
 }
 
 frida_on() {
   local s; s=$(find_serial)
-  adb -s "$s" shell "ps -A -o NAME" | grep -q "^com.android.vending$" \
-    || log "⚠️ Play 商店没在跑，frida 先起会让 Play 启动超时（先跑 ./mumu.sh play）"
-  adb -s "$s" shell "ps -A | grep -q frida-server || (nohup /data/local/tmp/frida-server -D >/dev/null 2>&1 &)"
+  [ -n "$(play_alive "$s")" ] \
+    || die "Play 商店没在跑，frida 先起会让 Play 启动超时（先跑 ./mumu.sh play）"
+  adb -s "$s" shell "pkill -f frida-server" 2>/dev/null || true
+  adb -s "$s" shell "nohup /data/local/tmp/frida-server -D >/dev/null 2>&1 &"
   sleep 2
   adb -s "$s" shell "ps -A | grep -q frida-server" && log "✅ frida-server 已起" || die "frida-server 起不来"
 }
