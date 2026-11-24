@@ -78,6 +78,38 @@ GMS 登录会直接 `ERR_TUNNEL_CONNECTION_FAILED` + HTTP 407。必须本地免�
 | `unsupported operand type(s) for \|` | 用了 python 3.9 | 换 python3.12 |
 | ADB 连不上 | 端口每次重启都变 | 不要写死，用 `./mumu.sh serial` |
 | 设备没 root | 模拟器 ROOT 被关 | `mumu-cli config 0 --setting '{"vmRootEnable":true}'` 后重启 |
+| **Google One 装不上 / 查 SKU 全空** | **账号的 Play 国家是 CN**（`account-play-country`，服务端判定） | 见下节 |
+
+## 地区（country）是最容易卡住的一点
+
+Play 的账号国家记在 `shared_prefs/finsky.xml` 的 `account-play-country`。**以服务端为准**：
+本地 `sed` 改 `CN`→`US` 会被服务器在下次启动时覆盖回去，单改无效。
+
+- 换 IP 不改国家（IP 只影响能不能连，不影响账号归属）
+- 改系统语言 en-US 也只是第二顺位，改了 Play 仍判 CN
+- Play 判定为 CN 时：`market://` 打 Google One 页显示 "isn't available in your country"，
+  `query_sku.py` 返回空
+
+三条出路：
+1. **Google One 直接侧载**（本机已做，见下）——绕过商店，但 App 内仍会说
+   "isn't available for this account"
+2. 用 Play 的「切换国家」流程：需要在**目标国 IP** 下、且账号有该国付款方式，
+   一年只能改一次
+3. 换一个本身注册在 US 的号
+
+### 侧载 Google One
+
+商店装不上时（地区被挡），直接拿 XAPK 装：
+
+```bash
+curl -sL -x http://127.0.0.1:18790 -A "Mozilla/5.0" \
+  -o /tmp/go.xapk \
+  "https://d.apkpure.net/b/APK/com.google.android.apps.subscriptions.red?version=latest"
+```
+
+解开后取 `*.apk` + `config.arm64_v8a.apk` + `config.en.apk` + `config.mdpi.apk`，
+用 `pm install-create / install-write / install-commit` 装（分包，`adb install` 单个装不了）。
+`https://d.apkpure.net` 可用；`d.apkpure.com` 和 `apkpure.net` 会被 Cloudflare 拦。
 
 ## 文件
 
